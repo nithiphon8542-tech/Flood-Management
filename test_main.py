@@ -20,6 +20,7 @@ from main import (
     list_records,
     update_record,
     validate_record,
+    _postgres_query,
 )
 
 
@@ -108,6 +109,16 @@ class FloodManagementTests(unittest.TestCase):
             validate_record({**VALID_RECORD, "latitude": 91, "longitude": 100})
         with self.assertRaisesRegex(ValueError, "จำนวนผู้เสียชีวิต"):
             validate_record({**VALID_RECORD, "deaths": -1})
+
+    def test_postgres_query_parameter_translation(self) -> None:
+        self.assertEqual(
+            _postgres_query(
+                "INSERT INTO flood_records (province, status) "
+                "VALUES (:province, :status) WHERE id = ?"
+            ),
+            "INSERT INTO flood_records (province, status) "
+            "VALUES (%(province)s, %(status)s) WHERE id = %s",
+        )
 
     def test_extended_impact_fields_and_csv_formula_protection(self) -> None:
         record = validate_record(

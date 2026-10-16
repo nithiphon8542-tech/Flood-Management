@@ -2,17 +2,15 @@ services:
   - type: web
     name: floodwatch
     runtime: python
-    plan: starter
+    plan: free
     region: singapore
-    buildCommand: echo "No external dependencies to install"
-    startCommand: if [ ! -f /var/data/flood_data.db ]; then cp flood_data.db /var/data/flood_data.db; fi; python main.py --host 0.0.0.0 --port $PORT --db /var/data/flood_data.db
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/summary
-    disk:
-      name: floodwatch-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: FLOODWATCH_ADMIN_USERNAME
         value: flood-admin
       - key: FLOODWATCH_ADMIN_PASSWORD
+        sync: false
+      - key: DATABASE_URL
         sync: false

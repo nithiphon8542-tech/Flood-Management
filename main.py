@@ -16,6 +16,7 @@ from contextlib import closing
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 
@@ -92,15 +93,80 @@ CREATE TABLE IF NOT EXISTS flood_records (
     source_url TEXT NOT NULL DEFAULT ''
 )
 """
+CREATE_POSTGRES_TABLE_SQL = CREATE_TABLE_SQL.replace(
+    "INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY"
+)
 
 
-def connect_database(db_path: str | Path) -> sqlite3.Connection:
+class DatabaseConnection:
+    def __init__(self, connection: Any, backend: str) -> None:
+        self.connection = connection
+        self.backend = backend
+
+    def execute(
+        self, query: str, parameters: object = ()
+    ) -> Any:
+        if self.backend == "postgres":
+            query = _postgres_query(query)
+        return self.connection.execute(query, parameters)
+
+    def __enter__(self) -> DatabaseConnection:
+        self.connection.__enter__()
+        return self
+
+    def __exit__(self, *args: object) -> object:
+        return self.connection.__exit__(*args)
+
+    def close(self) -> None:
+        self.connection.close()
+
+
+def _postgres_url(db_path: str | Path) -> str | None:
+    configured_url = os.environ.get("DATABASE_URL")
+    if configured_url:
+        return configured_url
+    path_value = str(db_path)
+    if path_value.startswith(("postgres://", "postgresql://")):
+        return path_value
+    return None
+
+
+def connect_database(db_path: str | Path) -> DatabaseConnection:
+    postgres_url = _postgres_url(db_path)
+    if postgres_url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except ImportError as error:
+            raise RuntimeError(
+                "PostgreSQL ต้องติดตั้งแพ็กเกจ psycopg[binary]"
+            ) from error
+        connection = psycopg.connect(postgres_url, row_factory=dict_row)
+        return DatabaseConnection(connection, "postgres")
+
     connection = sqlite3.connect(db_path)
     connection.row_factory = sqlite3.Row
-    return connection
+    return DatabaseConnection(connection, "sqlite")
+
+
+def _postgres_query(query: str) -> str:
+    query = query.replace("?", "%s")
+    return re.sub(r":([a-z_]+)", r"%(\1)s", query)
 
 
 def initialize_database(db_path: str | Path) -> None:
+    postgres_url = _postgres_url(db_path)
+    if postgres_url:
+        with closing(connect_database(postgres_url)) as connection:
+            with connection:
+                connection.execute(CREATE_POSTGRES_TABLE_SQL)
+                row = connection.execute(
+                    "SELECT COUNT(*) AS record_count FROM flood_records"
+                ).fetchone()
+                if row["record_count"] == 0:
+                    _seed_postgres_database(connection)
+        return
+
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with closing(connect_database(path)) as connection:
@@ -150,6 +216,28 @@ def initialize_database(db_path: str | Path) -> None:
                     f"SELECT id, {column_names} FROM flood_records_legacy"
                 )
                 connection.execute("DROP TABLE flood_records_legacy")
+
+
+def _seed_postgres_database(connection: DatabaseConnection) -> None:
+    source_path = BASE_DIR / "flood_data.db"
+    if not source_path.is_file():
+        raise FileNotFoundError(f"ไม่พบฐานข้อมูลตั้งต้น: {source_path}")
+    with closing(sqlite3.connect(source_path)) as source:
+        source.row_factory = sqlite3.Row
+        rows = source.execute("SELECT * FROM flood_records ORDER BY id").fetchall()
+    columns = ", ".join(("id", *RECORD_COLUMNS))
+    placeholders = ", ".join("?" for _ in range(len(RECORD_COLUMNS) + 1))
+    for row in rows:
+        values = [row["id"], *(row[column] for column in RECORD_COLUMNS)]
+        connection.execute(
+            f"INSERT INTO flood_records ({columns}) VALUES ({placeholders}) "
+            "ON CONFLICT (id) DO NOTHING",
+            values,
+        )
+    connection.execute(
+        "SELECT setval(pg_get_serial_sequence('flood_records', 'id'), "
+        "COALESCE(MAX(id), 1)) FROM flood_records"
+    )
 
 
 def _required_text(payload: dict[str, object], field: str, label: str, limit: int) -> str:
@@ -371,6 +459,13 @@ def create_record(db_path: str | Path, record: dict[str, object]) -> int:
         with connection:
             columns = ", ".join(RECORD_COLUMNS)
             values = ", ".join(f":{column}" for column in RECORD_COLUMNS)
+            if connection.backend == "postgres":
+                cursor = connection.execute(
+                    f"INSERT INTO flood_records ({columns}) VALUES ({values}) "
+                    "RETURNING id",
+                    _record_values(record),
+                )
+                return int(cursor.fetchone()["id"])
             cursor = connection.execute(
                 f"INSERT INTO flood_records ({columns}) VALUES ({values})",
                 _record_values(record),
@@ -642,12 +737,17 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    initialize_database(args.db)
+    database_target = os.environ.get("DATABASE_URL", args.db)
+    initialize_database(database_target)
     with ThreadingHTTPServer((args.host, args.port), lambda *a, **kw: FloodRequestHandler(
-        *a, db_path=args.db, **kw
+        *a, db_path=database_target, **kw
     )) as server:
         print(f"FloodWatch is running at http://{args.host}:{args.port}")
-        print(f"Database: {Path(args.db).resolve()}")
+        print(
+            "Database: PostgreSQL"
+            if _postgres_url(database_target)
+            else f"Database: {Path(args.db).resolve()}"
+        )
         try:
             server.serve_forever()
         except KeyboardInterrupt:
