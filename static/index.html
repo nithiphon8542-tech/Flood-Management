@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0b3854">
+    <title>FloodWatch | จัดการข้อมูลน้ำท่วม</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+    <link rel="stylesheet" href="/static/app.css">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="" defer></script>
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="FloodWatch หน้าหลัก">
+        <span class="brand-icon" aria-hidden="true">≈</span>
+        <span>Flood<span class="brand-light">Watch</span></span>
+      </a>
+      <span class="topbar-label">ระบบจัดการสถานการณ์น้ำท่วม</span>
+      <button class="button auth-button" id="auth-button" type="button">เข้าสู่ระบบผู้ดูแล</button>
+    </header>
+
+    <main class="page">
+      <section class="intro">
+        <div>
+          <p class="eyebrow">FLOOD SITUATION MANAGEMENT</p>
+          <h1>ข้อมูลสถานการณ์น้ำท่วม</h1>
+          <p class="subtitle">ติดตามพื้นที่ ระดับน้ำ และครัวเรือนที่ได้รับผลกระทบ</p>
+        </div>
+        <button class="button button-primary" id="add-button" type="button">
+          <span aria-hidden="true">＋</span> เพิ่มข้อมูล
+        </button>
+      </section>
+
+      <section class="summary-grid" aria-label="ภาพรวมสถานการณ์">
+        <article class="summary-card">
+          <span class="summary-icon blue" aria-hidden="true">▤</span>
+          <div><p>รายการทั้งหมด</p><strong id="summary-records">—</strong><small>พื้นที่ที่บันทึก</small></div>
+        </article>
+        <article class="summary-card">
+          <span class="summary-icon orange" aria-hidden="true">⌂</span>
+          <div><p>ครัวเรือนที่ได้รับผลกระทบ</p><strong id="summary-households">—</strong><small>รวมตามวันที่รายงาน · พื้นที่อาจซ้ำ</small></div>
+        </article>
+        <article class="summary-card">
+          <span class="summary-icon red" aria-hidden="true">!</span>
+          <div><p>พื้นที่เฝ้าระวัง / อพยพ</p><strong id="summary-urgent">—</strong><small>ต้องติดตามใกล้ชิด</small></div>
+        </article>
+        <article class="summary-card">
+          <span class="summary-icon teal" aria-hidden="true">⌖</span>
+          <div><p>จังหวัดที่ได้รับผลกระทบ</p><strong id="summary-provinces">—</strong><small>จังหวัด</small></div>
+        </article>
+        <article class="summary-card">
+          <span class="summary-icon blue" aria-hidden="true">♙</span>
+          <div><p>ประชาชนที่ได้รับผลกระทบ</p><strong id="summary-people">—</strong><small>รวมตามวันที่รายงาน · พื้นที่อาจซ้ำ</small></div>
+        </article>
+        <article class="summary-card">
+          <span class="summary-icon orange" aria-hidden="true">↗</span>
+          <div><p>อพยพ / บาดเจ็บ / เสียชีวิต</p><strong id="summary-casualties">—</strong><small id="summary-casualty-detail">รวมตามวันที่รายงาน · พื้นที่อาจซ้ำ</small></div>
+        </article>
+      </section>
+
+      <section class="map-panel" aria-labelledby="map-title">
+        <div class="map-heading">
+          <div>
+            <h2 id="map-title">แผนที่สถานการณ์</h2>
+            <p>เลือกหมุดเพื่อดูรายละเอียดรายงานในพื้นที่</p>
+          </div>
+          <span class="map-disclaimer">ตำแหน่งโดยประมาณระดับอำเภอ/จังหวัด</span>
+        </div>
+        <div id="map-status" class="map-status" role="status" aria-live="polite">กำลังโหลดแผนที่...</div>
+        <div id="flood-map" aria-label="แผนที่แสดงพื้นที่ที่มีรายงานน้ำท่วม"></div>
+        <div class="map-attribution-note">แผนที่ © OpenStreetMap contributors · หมุดใช้พิกัดโดยประมาณ ไม่ใช่จุดเกิดเหตุที่ยืนยัน</div>
+      </section>
+
+      <section class="records-panel">
+        <div class="panel-heading">
+          <div>
+            <h2>รายการสถานการณ์</h2>
+            <p>ค้นหาและจัดการข้อมูลน้ำท่วมในพื้นที่</p>
+          </div>
+          <div class="filters">
+            <label class="search-box">
+              <span class="visually-hidden">ค้นหาพื้นที่หรือหมายเหตุ</span>
+              <span aria-hidden="true">⌕</span>
+              <input id="search-input" type="search" placeholder="ค้นหาจังหวัด อำเภอ ตำบล..." autocomplete="off">
+            </label>
+            <label>
+              <span class="visually-hidden">กรองตามสถานะ</span>
+              <select id="status-filter">
+                <option value="">ทุกสถานะ</option>
+                <option value="active">กำลังเกิดเหตุ</option>
+                <option value="warning">เฝ้าระวัง</option>
+                <option value="evacuating">อพยพ</option>
+                <option value="resolved">คลี่คลายแล้ว</option>
+                <option value="unknown">ไม่ระบุสถานะ</option>
+              </select>
+            </label>
+            <label class="date-filter">ตั้งแต่
+              <input id="date-from" type="date" aria-label="กรองตั้งแต่วันที่">
+            </label>
+            <label class="date-filter">ถึง
+              <input id="date-to" type="date" aria-label="กรองถึงวันที่">
+            </label>
+            <a id="export-button" class="button button-secondary export-button" href="/api/export.csv">ส่งออก CSV</a>
+          </div>
+        </div>
+
+        <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>วันที่</th>
+                <th>ประเภท</th>
+                <th>พื้นที่</th>
+                <th>ระดับน้ำ</th>
+                <th>ผู้ได้รับผลกระทบ</th>
+                <th>สถานะ</th>
+                <th>รายละเอียด / แหล่งข้อมูล</th>
+                <th><span class="visually-hidden">จัดการ</span></th>
+              </tr>
+            </thead>
+            <tbody id="records-body">
+              <tr><td class="loading-cell" colspan="8">กำลังโหลดข้อมูล...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="data-note">ผู้เข้าชมดูข้อมูลได้โดยไม่ต้องเข้าสู่ระบบ · ผู้ดูแลต้องเข้าสู่ระบบก่อนจัดการข้อมูล</p>
+      </section>
+    </main>
+
+    <dialog id="login-dialog" class="record-dialog login-dialog">
+      <form id="login-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">ADMIN ACCESS</p>
+            <h2>เข้าสู่ระบบผู้ดูแล</h2>
+          </div>
+          <button class="icon-button" id="close-login" type="button" aria-label="ปิด">×</button>
+        </div>
+        <div class="form-grid">
+          <label>ชื่อผู้ใช้
+            <input id="admin-username" name="username" type="text" autocomplete="username" required>
+          </label>
+          <label>รหัสผ่าน
+            <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
+          </label>
+        </div>
+        <p id="login-error" class="form-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button class="button button-secondary" id="cancel-login" type="button">ยกเลิก</button>
+          <button class="button button-primary" id="submit-login" type="submit">เข้าสู่ระบบ</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="record-dialog" class="record-dialog">
+      <form id="record-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">FLOOD RECORD</p>
+            <h2 id="dialog-title">เพิ่มข้อมูลน้ำท่วม</h2>
+          </div>
+          <button class="icon-button" id="close-dialog" type="button" aria-label="ปิด">×</button>
+        </div>
+        <input id="record-id" type="hidden">
+        <div class="form-grid">
+          <label>วันที่เกิดเหตุ
+            <input id="occurred-at" name="occurred_at" type="date" required>
+          </label>
+          <label>วันที่รายงาน (ไม่บังคับ)
+            <input id="reported-at" name="reported_at" type="date">
+          </label>
+          <label>ประเภทอุทกภัย
+            <select id="flood-type" name="flood_type" required>
+              <option value="unknown">ไม่ระบุประเภท</option>
+              <option value="river">น้ำล้นตลิ่ง/น้ำแม่น้ำ</option>
+              <option value="flash">น้ำป่าไหลหลาก/น้ำท่วมฉับพลัน</option>
+              <option value="urban">น้ำท่วมขังในชุมชน</option>
+              <option value="coastal">น้ำทะเลหนุน/น้ำท่วมชายฝั่ง</option>
+              <option value="other">อื่น ๆ</option>
+            </select>
+          </label>
+          <label>จังหวัด
+            <input id="province" name="province" type="text" maxlength="100" placeholder="เช่น เชียงใหม่" required>
+          </label>
+          <label>อำเภอ / เขต
+            <input id="district" name="district" type="text" maxlength="100" placeholder="เช่น เมืองเชียงใหม่" required>
+          </label>
+          <label>ตำบล / แขวง (ไม่บังคับ)
+            <input id="subdistrict" name="subdistrict" type="text" maxlength="100">
+          </label>
+          <label>หมู่บ้าน / พื้นที่ (ไม่บังคับ)
+            <input id="villages" name="villages" type="text" maxlength="500">
+          </label>
+          <label>ละติจูด (ไม่บังคับ)
+            <input id="latitude" name="latitude" type="number" min="-90" max="90" step="any" placeholder="เช่น 18.7904">
+          </label>
+          <label>ลองจิจูด (ไม่บังคับ)
+            <input id="longitude" name="longitude" type="number" min="-180" max="180" step="any" placeholder="เช่น 98.9847">
+          </label>
+          <label>ระดับน้ำ (เมตร, ไม่บังคับ)
+            <input id="water-level" name="water_level" type="number" min="0" step="0.01" placeholder="ไม่ระบุ">
+          </label>
+          <label>ครัวเรือนที่ได้รับผลกระทบ (ไม่บังคับ)
+            <input id="households" name="affected_households" type="number" min="0" step="1" placeholder="ไม่ระบุ">
+          </label>
+          <label>ประชาชนที่ได้รับผลกระทบ (คน)
+            <input id="affected-people" name="affected_people" type="number" min="0" step="1" placeholder="ไม่ระบุ">
+          </label>
+          <label>ผู้อพยพ (คน)
+            <input id="evacuated-people" name="evacuated_people" type="number" min="0" step="1" placeholder="ไม่ระบุ">
+          </label>
+          <label>ผู้บาดเจ็บ (คน)
+            <input id="injured" name="injured" type="number" min="0" step="1" placeholder="ไม่ระบุ">
+          </label>
+          <label>ผู้เสียชีวิต (คน)
+            <input id="deaths" name="deaths" type="number" min="0" step="1" placeholder="ไม่ระบุ">
+          </label>
+          <label>สถานะ
+            <select id="record-status" name="status" required>
+              <option value="active">กำลังเกิดเหตุ</option>
+              <option value="warning">เฝ้าระวัง</option>
+              <option value="evacuating">อพยพ</option>
+              <option value="resolved">คลี่คลายแล้ว</option>
+              <option value="unknown">ไม่ระบุสถานะ</option>
+            </select>
+          </label>
+          <label class="full-width">หมายเหตุ
+            <textarea id="notes" name="notes" rows="3" maxlength="1000" placeholder="รายละเอียดเพิ่มเติม (ไม่บังคับ)"></textarea>
+          </label>
+          <label class="full-width">ลิงก์แหล่งข้อมูล (ไม่บังคับ)
+            <input id="source-url" name="source_url" type="url" maxlength="2000" placeholder="https://...">
+          </label>
+        </div>
+        <p class="form-hint">ระบุพิกัดละติจูดและลองจิจูดพร้อมกัน หากไม่ทราบให้เว้นว่างไว้</p>
+        <p id="form-error" class="form-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button class="button button-secondary" id="cancel-dialog" type="button">ยกเลิก</button>
+          <button class="button button-primary" id="save-button" type="submit">บันทึกข้อมูล</button>
+        </div>
+      </form>
+    </dialog>
+
+    <footer>FloodWatch · เครื่องมือบันทึกและติดตามข้อมูลสถานการณ์น้ำท่วม</footer>
+  </body>
+</html>
